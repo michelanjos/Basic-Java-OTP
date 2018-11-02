@@ -20,7 +20,8 @@ import com.arctix.security.otp.hmac.HMACEngine;
  * @author aprasa2
  *
  */
-public class OTPEngine extends HMACEngine {
+public class OTPEngine extends HMACEngine
+{
 
 	private RandomNumberGenerator rngInstance;
 
@@ -28,10 +29,7 @@ public class OTPEngine extends HMACEngine {
 
 	static final int TIME_LAP_INTERVAL = 5; // in minutes
 
-	static final int PASSWORD_EXPRIRY = 15; // in minutes
-
-	static final int MAX_ATTEMPTS = 5; // number of attempts allowed to
-										// validate an OTP
+	private Expiration expiration;
 
 	private static Logger logger = LoggerFactory.getLogger(OTPEngine.class);
 
@@ -40,33 +38,42 @@ public class OTPEngine extends HMACEngine {
 	private Counter counterProvider;
 
 	/**
-	 * Parameterized constructor. Creates new instance of OTP Engine.
-	 * Re-initializes Random Number generator.
+	 * Parameterized constructor. Creates new instance of OTP Engine. Re-initializes
+	 * Random Number generator.
 	 * 
 	 * @param key
 	 * @param algorithm
 	 */
-	private OTPEngine(SecretKey key, String algorithm, Counter counterProvider) {
+	private OTPEngine(SecretKey key, String algorithm, Counter counterProvider, Expiration expiration)
+	{
 		super(key, algorithm);
-		if (rngInstance == null) {
+		if (rngInstance == null)
+		{
 			rngInstance = RandomNumberGenerator.getInstance();
 			timeLapGenerator = new TimeLaps(TIME_LAP_INTERVAL);
 			this.counterProvider = counterProvider;
+			this.expiration = expiration;
 		}
 	}
 
 	/**
-	 * Returns new instance of OTP Engine. The instance is not thread-safe. Do
-	 * not use this method in production. Use one that provides concrete
-	 * implementation of Counter Provider
+	 * Returns new instance of OTP Engine. The instance is not thread-safe. Do not
+	 * use this method in production. Use one that provides concrete implementation
+	 * of Counter Provider
 	 * 
-	 * @param key
-	 *            - Secret key for generating HMAC
+	 * @param key - Secret key for generating HMAC
 	 * @return
 	 */
-	public static OTPEngine getInstance(SecretKey key) {
+	public static OTPEngine getInstance(SecretKey key)
+	{
 		logger.warn("Using In-Memory Counter!! Not recommended for production deployments");
-		return getInstance(key, "HmacSHA1", new InMemoryCounter());
+		return getInstance(key, new DefaultExpiration());
+	}
+
+	public static OTPEngine getInstance(SecretKey key, Expiration expiration)
+	{
+		logger.warn("Using In-Memory Counter!! Not recommended for production deployments");
+		return getInstance(key, "HmacSHA1", new InMemoryCounter(), expiration);
 	}
 
 	/**
@@ -76,7 +83,8 @@ public class OTPEngine extends HMACEngine {
 	 * @param counterProvider
 	 * @return
 	 */
-	public static OTPEngine getInstance(SecretKey key, Counter counterProvider) {
+	public static OTPEngine getInstance(SecretKey key, Counter counterProvider)
+	{
 		return getInstance(key, "HmacSHA1", counterProvider);
 	}
 
@@ -84,12 +92,30 @@ public class OTPEngine extends HMACEngine {
 	 * Returns new instance of OTP Engine. The instance is not thread-safe.
 	 * 
 	 * @param key
+	 * @param counterProvider
+	 * @return
+	 */
+	public static OTPEngine getInstance(SecretKey key, Counter counterProvider, Expiration expiration)
+	{
+		return getInstance(key, "HmacSHA1", counterProvider, expiration);
+	}
+
+	/**
+	 * Returns new instance of OTP Engine. The instance is not thread-safe.
+	 * 
+	 * @param key
 	 * @param algorithm
 	 * @param counterProvider
 	 * @return
 	 */
-	public static OTPEngine getInstance(SecretKey key, String algorithm, Counter counterProvider) {
-		return new OTPEngine(key, algorithm, counterProvider);
+	public static OTPEngine getInstance(SecretKey key, String algorithm, Counter counterProvider)
+	{
+		return getInstance(key, algorithm, counterProvider, new DefaultExpiration());
+	}
+
+	public static OTPEngine getInstance(SecretKey key, String algorithm, Counter counterProvider, Expiration expiration)
+	{
+		return new OTPEngine(key, algorithm, counterProvider, expiration);
 	}
 
 	/**
@@ -98,7 +124,8 @@ public class OTPEngine extends HMACEngine {
 	 * @param params
 	 * @return
 	 */
-	public OTP generatePasswordWithHmac(final String params[]) {
+	public OTP generatePasswordWithHmac(final String params[])
+	{
 
 		// generate a random password
 		String password = Integer.toString(rngInstance.getRandomInt());
@@ -111,8 +138,7 @@ public class OTPEngine extends HMACEngine {
 
 		String[] paramsForHMAC = (String[]) ArrayUtils.add(params, dateParam);
 
-		String hmac = new StringBuffer(generateHMAC(password, paramsForHMAC)).append("O")
-				.append(generateHMAC(password, params)).toString();
+		String hmac = new StringBuffer(generateHMAC(password, paramsForHMAC)).append("O").append(generateHMAC(password, params)).toString();
 
 		logger.debug("Generated HMAC " + hmac + " for time lap " + lastTimeLap.getTime());
 
@@ -128,12 +154,15 @@ public class OTPEngine extends HMACEngine {
 	 * @param params
 	 * @return
 	 */
-	public Result validatePasswordWithHmac(final OTP passwordWithMac, final String params[]) {
+	public Result validatePasswordWithHmac(final OTP passwordWithMac, final String params[])
+	{
 		boolean isValid = false;
 		OTP otpWithoutChecksum = null;
-		if (!passwordWithMac.hasValidChecksum()) {
+		if (!passwordWithMac.hasValidChecksum())
+		{
 			return new Result(Result.Code.FAIL_INVALID_CODE);
-		} else {
+		} else
+		{
 			otpWithoutChecksum = passwordWithMac.stripChecksum();
 		}
 
@@ -141,20 +170,22 @@ public class OTPEngine extends HMACEngine {
 		// 0 - dynamic part
 		// 1 - static part
 		String[] hmacToValidate = otpWithoutChecksum.getHmac().split("O");
-		if (hmacToValidate.length != 2) {
+		if (hmacToValidate.length != 2)
+		{
 			logger.debug("Invalid HMAC " + otpWithoutChecksum.getHmac());
 			return new Result(Result.Code.FAIL_INVALID_CODE);
 		}
 
 		// determine the number units of time laps to validate
-		final int timeLapPeriods = PASSWORD_EXPRIRY / TIME_LAP_INTERVAL;
+		final int timeLapPeriods = (int) (expiration.getPasswordExpireInMinutes() / TIME_LAP_INTERVAL);
 
 		// get start time for valid time laps within the expiration time
 		Calendar[] validTimes = timeLapGenerator.getPreviousTimeLap(timeLapPeriods);
 
 		int counter = counterProvider.getCurrentValue();
 
-		if (counter > MAX_ATTEMPTS) {
+		if (counter > expiration.getMaxAttempts())
+		{
 			return new Result(Result.Code.FAIL_MAX_ATTEMPTS_EXCEEDED);
 		}
 
@@ -162,9 +193,11 @@ public class OTPEngine extends HMACEngine {
 
 		String[] paramsForHMAC = null;
 		// validate password for all previous time periods within expiry period
-		for (Calendar time : validTimes) {
+		for (Calendar time : validTimes)
+		{
 			paramsForHMAC = (String[]) ArrayUtils.add(params, dateFormat.format(time.getTime()));
-			if (validateHMAC(hmacToValidate[0], otpWithoutChecksum.getPassword(), paramsForHMAC)) {
+			if (validateHMAC(hmacToValidate[0], otpWithoutChecksum.getPassword(), paramsForHMAC))
+			{
 				isValid = true;
 				logger.debug("Found password valid for time lap " + time.getTime() + " and counter " + counter);
 				counterProvider.reset();
@@ -172,12 +205,14 @@ public class OTPEngine extends HMACEngine {
 			}
 		}
 
-		if (!isValid) {
+		if (!isValid)
+		{
 			// increment the counter if provided mac is not valid
 			counterProvider.getNextValue();
 
 			// if the hmac does not belong to this user, throw invalid code
-			if (!validateHMAC(hmacToValidate[1], otpWithoutChecksum.getPassword(), params)) {
+			if (!validateHMAC(hmacToValidate[1], otpWithoutChecksum.getPassword(), params))
+			{
 				logger.debug("Codes swapped! Hmac does not belong to this user!");
 				return new Result(Result.Code.FAIL_INVALID_CODE);
 			}
@@ -193,9 +228,11 @@ public class OTPEngine extends HMACEngine {
 	 * @author aprasa2
 	 *
 	 */
-	public static class Result {
+	public static class Result
+	{
 
-		public static enum Code {
+		public static enum Code
+		{
 			SUCCESS, FAIL_INVALID_CODE, FAIL_CODE_EXPIRED, FAIL_MAX_ATTEMPTS_EXCEEDED
 		}
 
@@ -203,25 +240,30 @@ public class OTPEngine extends HMACEngine {
 		private String description;
 		private String hmac;
 
-		public Result(Code code) {
+		public Result(Code code)
+		{
 			this.resultCode = code;
 		}
 
-		public Result(Code code, String desc, String hmac) {
+		public Result(Code code, String desc, String hmac)
+		{
 			this.resultCode = code;
 			this.description = desc;
 			this.hmac = hmac;
 		}
 
-		public Code getResultCode() {
+		public Code getResultCode()
+		{
 			return resultCode;
 		}
 
-		public String getDescriptionc() {
+		public String getDescriptionc()
+		{
 			return description;
 		}
 
-		public String getHmac() {
+		public String getHmac()
+		{
 			return hmac;
 		}
 	}
